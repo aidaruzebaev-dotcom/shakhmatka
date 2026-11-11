@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Шахматка аренды</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0E6B62">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Шахматка">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600&family=Unbounded:wght@500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout idea: a hotel-style booking board. Sticky apartment column on the left,
+   one grid column per night, each booking is a bar spanning from the middle of
+   the check-in day to the middle of the check-out day. */
+:root{
+  --bg:#F3F5F4; --surface:#FFFFFF; --ink:#15221F; --muted:#5B6B67; --line:#DCE3E0;
+  --accent:#0E6B62; --on-accent:#FFFFFF; --warn:#9A4A06; --danger:#B3261E;
+  --today:#E1F0EC; --wknd:#EDF1EF;
+  --cell:56px; --name:136px; --row:64px;
+  --font-body:'Golos Text',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  --font-display:'Unbounded','Golos Text',system-ui,sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#101615; --surface:#172120; --ink:#E8EFED; --muted:#93A5A0; --line:#2A3836;
+    --accent:#3FB8A8; --on-accent:#06211D; --warn:#F2B25C; --danger:#F2877F;
+    --today:#1B3330; --wknd:#1B2625; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#101615; --surface:#172120; --ink:#E8EFED; --muted:#93A5A0; --line:#2A3836;
+  --accent:#3FB8A8; --on-accent:#06211D; --warn:#F2B25C; --danger:#F2877F;
+  --today:#1B3330; --wknd:#1B2625; color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:15px/1.45 var(--font-body);-webkit-text-size-adjust:100%}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.wrap{max-width:1180px;margin:0 auto;padding:16px 16px 72px}
+header.top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
+h1{font:600 20px/1.2 var(--font-display);margin:0;letter-spacing:-.01em}
+.sub{color:var(--muted);font-size:13px;margin-top:4px}
+.badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:99px;padding:4px 10px;background:var(--surface)}
+.badge i{width:7px;height:7px;border-radius:50%;background:var(--muted);display:inline-block}
+.badge em{font-style:normal}
+.badge.ok i{background:var(--accent)}
+.badge.bad i{background:var(--danger)}
+nav.tabs{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap}
+nav.tabs button{border:1px solid var(--line);background:var(--surface);border-radius:99px;padding:8px 16px;cursor:pointer}
+nav.tabs button[aria-current="page"]{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 14px}
+.tile b{display:block;font:600 22px/1.2 var(--font-display);font-variant-numeric:tabular-nums}
+.tile span{font-size:12px;color:var(--muted)}
+.tile.warn b{color:var(--warn)}
+.toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:12px}
+.toolbar .range{font-variant-numeric:tabular-nums;color:var(--muted);min-width:120px;text-align:center}
+.toolbar .sp{flex:1}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:9px;padding:9px 14px;cursor:pointer}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.btn.danger{color:var(--danger)}
+.btn.confirm{background:var(--danger);border-color:var(--danger);color:#fff}
+.btn.icon{padding:9px 12px}
+.board{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow-x:auto}
+.grid{width:max-content;min-width:100%}
+.row{display:grid;grid-template-columns:var(--name) repeat(var(--n),var(--cell));height:var(--row);border-top:1px solid var(--line)}
+.row.head{height:56px;border-top:0}
+.nm{grid-column:1;grid-row:1;position:sticky;left:0;z-index:4;background:var(--surface);padding:0 12px;display:flex;flex-direction:column;justify-content:center;border-right:1px solid var(--line);min-width:0}
+.nm b{font-weight:600;font-size:13px;line-height:1.25;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.nm small{color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nm.mon{font-size:12px;color:var(--muted)}
+.hd{grid-row:1;border-left:1px solid var(--line);display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:12px;color:var(--muted);line-height:1.2}
+.hd b{font-size:16px;color:var(--ink);font-variant-numeric:tabular-nums}
+.hd small{font-size:10px}
+.hd.wknd span{color:var(--danger)}
+.hd.today{background:var(--today)}
+.hd.today b{color:var(--accent)}
+.cell{grid-row:1;border:0;border-left:1px solid var(--line);background:transparent;cursor:pointer;padding:0;min-width:0}
+.cell.wknd{background:var(--wknd)}
+.cell.today{background:var(--today)}
+.cell:hover{background:color-mix(in srgb,var(--accent) 14%,transparent)}
+.bar{grid-row:1;z-index:2;align-self:center;height:calc(var(--row) - 22px);border:0;border-radius:7px;color:#fff;text-align:left;padding:0 8px;cursor:pointer;overflow:hidden;display:flex;flex-direction:column;justify-content:center;min-width:0}
+.bar b{font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar span{font-size:10.5px;opacity:.88;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar.due{box-shadow:inset 0 -3px 0 #FFD58A}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:12px;font-size:12px;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:10px;height:10px;border-radius:3px;display:inline-block}
+.legend i.due{background:var(--surface);border:1px solid var(--line);box-shadow:inset 0 -3px 0 #FFD58A}
+.list{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.item{display:flex;align-items:center;gap:12px;padding:12px 14px;border-top:1px solid var(--line);width:100%;text-align:left;background:transparent;border-left:0;border-right:0;border-bottom:0;cursor:pointer}
+.list > .item:first-child, .list > div:first-child .item{border-top:0}
+.item:hover{background:var(--wknd)}
+.item .grow{flex:1;min-width:0}
+.item .grow b{display:block;font-weight:600}
+.item .grow span{display:block;color:var(--muted);font-size:13px;overflow:hidden;text-overflow:ellipsis}
+.tag{font-size:11px;font-weight:600;border-radius:6px;padding:3px 8px;white-space:nowrap}
+.tag.in{background:var(--accent);color:var(--on-accent)}
+.tag.out{background:var(--wknd);color:var(--ink);border:1px solid var(--line)}
+.chip{font-size:12px;color:var(--warn);white-space:nowrap;font-variant-numeric:tabular-nums}
+h2.day{font:600 15px/1.3 var(--font-body);margin:20px 0 8px}
+.empty{background:var(--surface);border:1px dashed var(--line);border-radius:12px;padding:32px 20px;text-align:center}
+.empty p{margin:0 0 14px;color:var(--muted)}
+.empty .btn+.btn{margin-left:8px}
+.note{color:var(--muted)}
+.overlay{position:fixed;inset:0;background:rgba(10,20,18,.5);display:flex;align-items:center;justify-content:center;padding:16px;z-index:50}
+.sheet{background:var(--surface);border-radius:14px;max-width:520px;width:100%;max-height:100%;overflow:auto;padding:20px;border:1px solid var(--line)}
+.sheet h2{font:600 17px/1.3 var(--font-display);margin:0 0 8px}
+.sheet label{display:block;font-size:12px;color:var(--muted);margin:12px 0 4px}
+.sheet input,.sheet select,.sheet textarea{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px 10px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.hint{font-size:12px;color:var(--muted);margin:6px 0 0}
+.err{color:var(--danger);font-size:13px;min-height:18px;margin:10px 0 0}
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;align-items:center}
+.actions .sp{flex:1}
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:10px;font-size:14px;z-index:60;max-width:90%}
+@media (max-width:640px){
+  :root{--cell:52px;--name:108px}
+  .wrap{padding:12px 12px 72px}
+  .two{grid-template-columns:1fr}
+  .overlay{align-items:flex-end;padding:0}
+  .sheet{border-radius:14px 14px 0 0;max-width:none}
+}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Шахматка аренды</h1>
+      <div class="sub" id="today-label"></div>
+    </div>
+    <span class="badge" id="badge"><i></i><em>Загрузка</em></span>
+  </header>
+  <nav class="tabs" aria-label="Разделы">
+    <button type="button" data-act="tab" data-tab="grid">Шахматка</button>
+    <button type="button" data-act="tab" data-tab="today">Заезды и выезды</button>
+    <button type="button" data-act="tab" data-tab="apts">Квартиры</button>
+  </nav>
+  <div id="summary"></div>
+  <main id="view"></main>
+</div>
+<div id="modal"></div>
+<div id="toast-root"></div>
+
+<script>
+(function(){
+'use strict';
+
+var SOURCES=['Авито','Циан','Островок','Суточно.ру','Яндекс Путешествия','Напрямую','Другое'];
+var SRC_COLOR={'Авито':'#1E6FD9','Циан':'#3949AB','Островок':'#C2410C','Суточно.ру':'#00796B','Яндекс Путешествия':'#B91C1C','Напрямую':'#6D4C41','Другое':'#5F6B68'};
+var WD=['вс','пн','вт','ср','чт','пт','сб'];
+var MON=['янв','фев','мар','апр','мая','июн','июл','авг','сен','окт','ноя','дек'];
+var DAYS=21;
+var LS_KEY='rental_board_v1';
+
+var state={apartments:[],bookings:[],mode:'loading',loaded:{a:false,b:false},tab:'grid',start:null,db:null,syncError:false};
+
+/* ---------- helpers ---------- */
+function pad(n){return String(n).padStart(2,'0');}
+function toMs(s){var p=s.split('-').map(Number);return Date.UTC(p[0],p[1]-1,p[2]);}
+function toStr(ms){var d=new Date(ms);return d.getUTCFullYear()+'-'+pad(d.getUTCMonth()+1)+'-'+pad(d.getUTCDate());}
+function addDays(s,n){return toStr(toMs(s)+n*864e5);}
+function diff(a,b){return Math.round((toMs(b)-toMs(a))/864e5);}
+function todayStr(){var d=new Date();return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());}
+function fmtShort(s){return s.slice(8,10)+'.'+s.slice(5,7);}
+function fmtFull(s){return s.slice(8,10)+'.'+s.slice(5,7)+'.'+s.slice(0,4);}
+function wdOf(s){return new Date(toMs(s)).getUTCDay();}
+function isDate(s){return /^\d{4}-\d{2}-\d{2}$/.test(s||'')&&!isNaN(toMs(s));}
+function rub(n){return Math.round(n).toLocaleString('ru-RU')+' ₽';}
+function nightsLabel(n){var a=n%10,b=n%100;if(a===1&&b!==11)return n+' ночь';if(a>=2&&a<=4&&(b<12||b>14))return n+' ночи';return n+' ночей';}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
+function num(x){return parseInt(String(x).replace(/\D/g,''),10)||0;}
+function $(id){return document.getElementById(id);}
+function aptById(id){for(var i=0;i<state.apartments.length;i++){if(state.apartments[i].id===id)return state.apartments[i];}return null;}
+function sortApts(){state.apartments.sort(function(a,b){return (a.created||0)-(b.created||0)||String(a.name).localeCompare(String(b.name),'ru');});}
+function stripId(o){var r={};for(var k in o){if(k!=='id')r[k]=o[k];}return r;}
+
+var toastTimer=null;
+function toast(text){
+  var root=$('toast-root');
+  root.innerHTML='<div class="toast" role="status">'+esc(text)+'</div>';
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(function(){root.innerHTML='';},3500);
+}
+
+/* ---------- storage: shared database when available, this device otherwise ---------- */
+function lsLoad(){
+  try{var r=localStorage.getItem(LS_KEY);if(r){var d=JSON.parse(r);state.apartments=d.apartments||[];state.bookings=d.bookings||[];}}catch(e){}
+  sortApts();
+}
+function lsSave(){
+  try{localStorage.setItem(LS_KEY,JSON.stringify({apartments:state.apartments,bookings:state.bookings}));}catch(e){}
+}
+function goLocal(){
+  state.mode='local';state.loaded.a=true;state.loaded.b=true;lsLoad();render();
+}
+function initStorage(){
+  var c=window.claude;
+  if(!c||typeof c.use!=='function'){goLocal();return;}
+  var p;
+  try{p=c.use('db');}catch(e){goLocal();return;}
+  Promise.resolve(p).then(function(db){
+    if(!db){goLocal();return;}
+    state.db=db;state.mode='cloud';subscribe();render();
+  },function(){goLocal();});
+}
+function subscribe(){
+  var db=state.db;
+  var timer=setTimeout(function(){state.loaded.a=true;state.loaded.b=true;render();},10000);
+  function check(){if(state.loaded.a&&state.loaded.b)clearTimeout(timer);}
+  function fail(){state.syncError=true;state.loaded.a=true;state.loaded.b=true;clearTimeout(timer);render();}
+  db.collection('apartments').onSnapshot(function(snap){
+    state.apartments=snap.docs.map(function(d){var o={};var data=d.data()||{};for(var k in data)o[k]=data[k];o.id=d.id;return o;});
+    sortApts();
+    if(!snap.metadata.fromCache||snap.size>0){state.loaded.a=true;}
+    state.syncError=false;check();render();
+  },fail);
+  db.collection('bookings').onSnapshot(function(snap){
+    state.bookings=snap.docs.map(function(d){var o={};var data=d.data()||{};for(var k in data)o[k]=data[k];o.id=d.id;return o;});
+    if(!snap.metadata.fromCache||snap.size>0){state.loaded.b=true;}
+    state.syncError=false;check();render();
+  },fail);
+}
+function upsert(arr,rec){
+  for(var i=0;i<arr.length;i++){if(arr[i].id===rec.id){arr[i]=rec;return;}}
+  arr.push(rec);
+}
+function putApt(a){
+  if(state.mode==='cloud'){return state.db.doc('apartments/'+a.id).set(stripId(a));}
+  upsert(state.apartments,a);sortApts();lsSave();render();return Promise.resolve();
+}
+function putBooking(b){
+  if(state.mode==='cloud'){return state.db.doc('bookings/'+b.id).set(stripId(b));}
+  upsert(state.bookings,b);lsSave();render();return Promise.resolve();
+}
+function delBooking(id){
+  if(state.mode==='cloud'){return state.db.doc('bookings/'+id).delete();}
+  state.bookings=state.bookings.filter(function(b){return b.id!==id;});lsSave();render();return Promise.resolve();
+}
+function delApt(id){
+  if(state.mode==='cloud'){
+    var ids=state.bookings.filter(function(b){return b.apartmentId===id;}).map(function(b){return b.id;});
+    var chain=Promise.resolve();
+    ids.forEach(function(bid){chain=chain.then(function(){return state.db.doc('bookings/'+bid).delete();});});
+    return chain.then(function(){return state.db.doc('apartments/'+id).delete();});
+  }
+  state.bookings=state.bookings.filter(function(b){return b.apartmentId!==id;});
+  state.apartments=state.apartments.filter(function(a){return a.id!==id;});
+  lsSave();render();return Promise.resolve();
+}
+function conflict(aptId,a,b,ignoreId){
+  for(var i=0;i<state.bookings.length;i++){
+    var x=state.bookings[i];
+    if(x.apartmentId===aptId&&x.id!==ignoreId&&a<x.checkOut&&x.checkIn<b)return x;
+  }
+  return null;
+}
+function loadDemo(){
+  var t=todayStr();var now=Date.now();
+  var apts=[
+    {id:'d1',name:'Студия на Тверской',address:'ул. Тверская, 12',created:now},
+    {id:'d2',name:'Однушка у метро',address:'ул. Ленина, 5',created:now+1},
+    {id:'d3',name:'Двушка с балконом',address:'пр. Мира, 40',created:now+2},
+    {id:'d4',name:'Лофт в центре',address:'ул. Садовая, 3',created:now+3}
+  ];
+  var bks=[];
+  function add(i,inD,n,guest,src,amount,prepaid,phone){
+    bks.push({id:'db'+i+'x'+(inD+10),apartmentId:apts[i].id,guestName:guest,phone:phone||'',checkIn:addDays(t,inD),checkOut:addDays(t,inD+n),amount:amount,prepaid:prepaid,source:src,note:'',created:now+bks.length});
+  }
+  add(0,-3,5,'Иван Петров','Авито',15000,15000,'+7 900 111-22-33');
+  add(0,2,3,'Анна Смирнова','Циан',10500,3000,'+7 900 222-33-44');
+  add(0,6,4,'Олег Никитин','Напрямую',14000,14000);
+  add(1,-1,1,'Мария Козлова','Суточно.ру',3500,3500);
+  add(1,0,3,'Сергей Волков','Авито',10500,2000,'+7 900 333-44-55');
+  add(1,5,2,'Елена Орлова','Яндекс Путешествия',7000,7000);
+  add(2,-5,4,'Дмитрий Фёдоров','Островок',16000,16000);
+  add(2,1,7,'Татьяна Белова','Островок',28000,5000);
+  add(3,-6,6,'Павел Ершов','Напрямую',24000,24000);
+  add(3,1,2,'Наталья Громова','Циан',8000,8000);
+  add(3,4,5,'Кирилл Лебедев','Авито',20000,4000);
+  var chain=Promise.resolve();
+  apts.forEach(function(a){chain=chain.then(function(){return putApt(a);});});
+  bks.forEach(function(b){chain=chain.then(function(){return putBooking(b);});});
+  return chain;
+}
+
+/* ---------- rendering ---------- */
+function renderBadge(){
+  var b=$('badge');var cls='badge',txt='';
+  if(state.syncError){cls+=' bad';txt='Нет связи с хранилищем';}
+  else if(state.mode==='cloud'){cls+=' ok';txt='Данные общие для всех устройств';}
+  else if(state.mode==='local'){txt='Данные только на этом устройстве';}
+  else{txt='Загрузка';}
+  b.className=cls;b.innerHTML='<i></i><em>'+esc(txt)+'</em>';
+}
+function summaryHtml(){
+  var t=todayStr();var bs=state.bookings;
+  var ins=0,outs=0,occ=0,due=0;
+  bs.forEach(function(b){
+    if(b.checkIn===t)ins++;
+    if(b.checkOut===t)outs++;
+    if(b.checkIn<=t&&t<b.checkOut)occ++;
+    if(b.checkOut>=t)due+=Math.max(0,(b.amount||0)-(b.prepaid||0));
+  });
+  return '<div class="tiles">'
+    +'<div class="tile"><b>'+ins+'</b><span>Заезды сегодня</span></div>'
+    +'<div class="tile"><b>'+outs+'</b><span>Выезды сегодня</span></div>'
+    +'<div class="tile"><b>'+occ+' из '+state.apartments.length+'</b><span>Квартир занято сейчас</span></div>'
+    +'<div class="tile warn"><b>'+rub(due)+'</b><span>Ждём доплат</span></div>'
+    +'</div>';
+}
+function emptyHtml(){
+  return '<div class="empty"><p>Пока нет квартир. Добавьте первую, и можно вносить брони.</p>'
+    +'<button class="btn primary" type="button" data-act="newApt">Добавить квартиру</button>'
+    +'<button class="btn" type="button" data-act="demo">Заполнить примером</button></div>';
+}
+function gridHtml(){
+  var t=todayStr();var s=state.start;
+  var days=[];for(var i=0;i<DAYS;i++)days.push(addDays(s,i));
+  var h='<div class="toolbar">'
+    +'<button class="btn icon" type="button" data-act="shift" data-n="-7" aria-label="На неделю назад">‹</button>'
+    +'<span class="range">'+fmtShort(days[0])+' – '+fmtShort(days[DAYS-1])+'</span>'
+    +'<button class="btn icon" type="button" data-act="shift" data-n="7" aria-label="На неделю вперёд">›</button>'
+    +'<button class="btn" type="button" data-act="today">Сегодня</button>'
+    +'<span class="sp"></span>'
+    +'<button class="btn primary" type="button" data-act="newBooking">+ Бронь</button></div>';
+  h+='<div class="board"><div class="grid" style="--n:'+DAYS+'">';
+  h+='<div class="row head"><div class="nm mon">'+MON[+s.slice(5,7)-1]+' '+s.slice(0,4)+'</div>';
+  days.forEach(function(d,i){
+    var wk=wdOf(d);var cls='hd'+(wk===0||wk===6?' wknd':'')+(d===t?' today':'');
+    var mon=(i===0||d.slice(8,10)==='01')?'<small>'+MON[+d.slice(5,7)-1]+'</small>':'';
+    h+='<div class="'+cls+'" style="grid-column:'+(i+2)+'"><span>'+WD[wk]+'</span><b>'+(+d.slice(8,10))+'</b>'+mon+'</div>';
+  });
+  h+='</div>';
+  state.apartments.forEach(function(a){
+    h+='<div class="row"><div class="nm"><b>'+esc(a.name)+'</b>'+(a.address?'<small>'+esc(a.address)+'</small>':'')+'</div>';
+    days.forEach(function(d,i){
+      var wk=wdOf(d);var cls='cell'+(wk===0||wk===6?' wknd':'')+(d===t?' today':'');
+      h+='<button type="button" class="'+cls+'" style="grid-column:'+(i+2)+'" data-act="cell" data-apt="'+esc(a.id)+'" data-date="'+d+'" aria-label="Новая бронь: '+esc(a.name)+', '+fmtFull(d)+'"></button>';
+    });
+    state.bookings.forEach(function(b){
+      if(b.apartmentId!==a.id)return;
+      var si=diff(s,b.checkIn),ei=diff(s,b.checkOut);
+      if(ei<0||si>DAYS-1)return;
+      var a0=Math.max(si,0),b0=Math.min(ei,DAYS-1);
+      var ml=si<0?'0':'calc(var(--cell) / 2)';
+      var mr=ei>DAYS-1?'0':'calc(var(--cell) / 2)';
+      var bal=(b.amount||0)-(b.prepaid||0);
+      var n=diff(b.checkIn,b.checkOut);
+      var second=n+' н. · '+(bal>0?rub(bal):'оплачено');
+      var title=b.guestName+', '+fmtFull(b.checkIn)+' – '+fmtFull(b.checkOut)+', '+b.source+(bal>0?', доплата '+rub(bal):'');
+      h+='<button type="button" class="bar'+(bal>0?' due':'')+'" data-act="bar" data-id="'+esc(b.id)+'" title="'+esc(title)+'" style="grid-column:'+(a0+2)+' / '+(b0+3)+';margin-left:'+ml+';margin-right:'+mr+';background:'+(SRC_COLOR[b.source]||SRC_COLOR['Другое'])+'"><b>'+esc(b.guestName)+'</b><span>'+esc(second)+'</span></button>';
+    });
+    h+='</div>';
+  });
+  h+='</div></div>';
+  h+='<div class="legend">';
+  SOURCES.forEach(function(x){h+='<span><i style="background:'+SRC_COLOR[x]+'"></i>'+esc(x)+'</span>';});
+  h+='<span><i class="due"></i>Жёлтая полоса: есть доплата</span></div>';
+  return h;
+}
+function todayHtml(){
+  var t=todayStr();var h='';
+  for(var i=0;i<3;i++){
+    var d=addDays(t,i);
+    var label=i===0?'Сегодня':i===1?'Завтра':WD[wdOf(d)];
+    var ins=state.bookings.filter(function(b){return b.checkIn===d;});
+    var outs=state.bookings.filter(function(b){return b.checkOut===d;});
+    h+='<h2 class="day">'+label+', '+fmtShort(d)+'</h2>';
+    if(!ins.length&&!outs.length){h+='<p class="note">Заездов и выездов нет.</p>';continue;}
+    h+='<div class="list">';
+    ins.forEach(function(b){h+=todayItem(b,true);});
+    outs.forEach(function(b){h+=todayItem(b,false);});
+    h+='</div>';
+  }
+  return h;
+}
+function todayItem(b,isIn){
+  var a=aptById(b.apartmentId);var bal=(b.amount||0)-(b.prepaid||0);
+  var parts=[a?a.name:'Квартира удалена',b.source];
+  if(b.phone)parts.push(b.phone);
+  return '<div><button type="button" class="item" data-act="bar" data-id="'+esc(b.id)+'">'
+    +'<span class="tag '+(isIn?'in':'out')+'">'+(isIn?'Заезд':'Выезд')+'</span>'
+    +'<span class="grow"><b>'+esc(b.guestName)+'</b><span>'+esc(parts.join(' · '))+'</span></span>'
+    +(isIn&&bal>0?'<span class="chip">доплата '+rub(bal)+'</span>':'')
+    +'</button></div>';
+}
+function aptsHtml(){
+  var h='<div class="toolbar"><span class="sp"></span><button class="btn primary" type="button" data-act="newApt">+ Квартира</button></div>';
+  if(!state.apartments.length)return h+emptyHtml();
+  h+='<div class="list">';
+  state.apartments.forEach(function(a){
+    var n=state.bookings.filter(function(b){return b.apartmentId===a.id;}).length;
+    h+='<div><button type="button" class="item" data-act="editApt" data-id="'+esc(a.id)+'"><span class="grow"><b>'+esc(a.name)+'</b><span>'+esc((a.address?a.address+' · ':'')+'броней: '+n)+'</span></span><span class="note">Изменить</span></button></div>';
+  });
+  h+='</div>';
+  return h;
+}
+function render(){
+  if(!state.start)return;
+  document.querySelectorAll('[data-tab]').forEach(function(b){b.setAttribute('aria-current',b.dataset.tab===state.tab?'page':'false');});
+  renderBadge();
+  var view=$('view'),sum=$('summary');
+  if(!(state.loaded.a&&state.loaded.b)){sum.innerHTML='';view.innerHTML='<p class="note">Загружаю данные…</p>';return;}
+  if(state.tab==='apts'){sum.innerHTML='';view.innerHTML=aptsHtml();return;}
+  if(!state.apartments.length){sum.innerHTML='';view.innerHTML=emptyHtml();return;}
+  sum.innerHTML=summaryHtml();
+  view.innerHTML=state.tab==='today'?todayHtml():gridHtml();
+}
+
+/* ---------- dialogs ---------- */
+function closeModal(){$('modal').innerHTML='';document.removeEventListener('keydown',onKey);}
+function onKey(e){if(e.key==='Escape')closeModal();}
+function openSheet(html){
+  $('modal').innerHTML='<div class="overlay" id="ov">'+html+'</div>';
+  document.addEventListener('keydown',onKey);
+  $('ov').addEventListener('mousedown',function(e){if(e.target===$('ov'))closeModal();});
+}
+function openBooking(opts){
+  if(!state.apartments.length){toast('Сначала добавьте квартиру');return;}
+  var ex=null;
+  if(opts.id){for(var i=0;i<state.bookings.length;i++){if(state.bookings[i].id===opts.id)ex=state.bookings[i];}}
+  var aptId=ex?ex.apartmentId:(opts.aptId||state.apartments[0].id);
+  var cin=ex?ex.checkIn:(opts.date||todayStr());
+  var cout=ex?ex.checkOut:addDays(cin,1);
+  var src=ex?ex.source:'Напрямую';
+  var aptOpts=state.apartments.map(function(a){return '<option value="'+esc(a.id)+'"'+(a.id===aptId?' selected':'')+'>'+esc(a.name)+'</option>';}).join('');
+  var srcOpts=SOURCES.map(function(s){return '<option'+(s===src?' selected':'')+'>'+esc(s)+'</option>';}).join('');
+  openSheet('<form class="sheet" id="bf" novalidate role="dialog" aria-modal="true" aria-labelledby="mt">'
+    +'<h2 id="mt">'+(ex?'Бронь':'Новая бронь')+'</h2>'
+    +'<label for="f-apt">Квартира</label><select id="f-apt">'+aptOpts+'</select>'
+    +'<div class="two"><div><label for="f-in">Заезд</label><input type="date" id="f-in" value="'+cin+'"></div>'
+    +'<div><label for="f-out">Выезд</label><input type="date" id="f-out" value="'+cout+'"></div></div>'
+    +'<p class="hint" id="f-n"></p>'
+    +'<label for="f-guest">Имя гостя</label><input id="f-guest" autocomplete="off" value="'+esc(ex?ex.guestName:'')+'">'
+    +'<label for="f-phone">Телефон</label><input id="f-phone" type="tel" autocomplete="off" value="'+esc(ex?ex.phone:'')+'">'
+    +'<label for="f-src">Откуда бронь</label><select id="f-src">'+srcOpts+'</select>'
+    +'<div class="two"><div><label for="f-amount">Сумма, ₽</label><input id="f-amount" inputmode="numeric" autocomplete="off" value="'+(ex&&ex.amount?ex.amount:'')+'"></div>'
+    +'<div><label for="f-prepaid">Предоплата, ₽</label><input id="f-prepaid" inputmode="numeric" autocomplete="off" value="'+(ex&&ex.prepaid?ex.prepaid:'')+'"></div></div>'
+    +'<label for="f-note">Заметка (время заезда, просьбы гостя)</label><textarea id="f-note" rows="3">'+esc(ex?ex.note:'')+'</textarea>'
+    +'<p class="err" id="f-err" role="alert"></p>'
+    +'<div class="actions">'+(ex?'<button type="button" class="btn danger" id="f-del">Удалить</button>':'')
+    +'<span class="sp"></span><button type="button" class="btn" id="f-cancel">Отмена</button><button type="submit" class="btn primary">Сохранить</button></div>'
+    +'</form>');
+  function hint(){
+    var a=$('f-in').value,b=$('f-out').value;
+    $('f-n').textContent=(isDate(a)&&isDate(b)&&diff(a,b)>0)?nightsLabel(diff(a,b)):'Проверьте даты';
+  }
+  hint();
+  $('f-in').addEventListener('change',function(){
+    var a=$('f-in').value,b=$('f-out').value;
+    if(isDate(a)&&(!isDate(b)||b<=a))$('f-out').value=addDays(a,1);
+    hint();
+  });
+  $('f-out').addEventListener('change',hint);
+  $('f-cancel').addEventListener('click',closeModal);
+  var delBtn=$('f-del');
+  if(delBtn){delBtn.addEventListener('click',function(){
+    if(!delBtn.dataset.sure){delBtn.dataset.sure='1';delBtn.textContent='Точно удалить?';delBtn.className='btn confirm';return;}
+    delBooking(ex.id).then(closeModal,function(){$('f-err').textContent='Не удалось удалить. Проверьте соединение и попробуйте ещё раз.';});
+  });}
+  $('bf').addEventListener('submit',function(e){
+    e.preventDefault();
+    var err=$('f-err');err.textContent='';
+    var apt=$('f-apt').value,a=$('f-in').value,b=$('f-out').value,guest=$('f-guest').value.trim();
+    if(!guest){err.textContent='Введите имя гостя.';$('f-guest').focus();return;}
+    if(!isDate(a)||!isDate(b)){err.textContent='Укажите даты заезда и выезда.';return;}
+    if(b<=a){err.textContent='Выезд должен быть позже заезда.';return;}
+    var c=conflict(apt,a,b,ex?ex.id:null);
+    if(c){err.textContent='Эти даты заняты: '+c.guestName+', '+fmtShort(c.checkIn)+' – '+fmtShort(c.checkOut)+'.';return;}
+    var rec={id:ex?ex.id:uid(),apartmentId:apt,guestName:guest,phone:$('f-phone').value.trim(),checkIn:a,checkOut:b,
+      amount:num($('f-amount').value),prepaid:num($('f-prepaid').value),source:$('f-src').value,note:$('f-note').value.trim(),created:ex&&ex.created?ex.created:Date.now()};
+    putBooking(rec).then(closeModal,function(){err.textContent='Не удалось сохранить. Проверьте соединение и попробуйте ещё раз.';});
+  });
+  setTimeout(function(){var f=$(ex?'f-guest':'f-guest');if(f)f.focus();},0);
+}
+function openApt(id){
+  var ex=id?aptById(id):null;
+  var n=ex?state.bookings.filter(function(b){return b.apartmentId===ex.id;}).length:0;
+  openSheet('<form class="sheet" id="af" novalidate role="dialog" aria-modal="true" aria-labelledby="mt">'
+    +'<h2 id="mt">'+(ex?'Квартира':'Новая квартира')+'</h2>'
+    +'<label for="a-name">Название</label><input id="a-name" autocomplete="off" value="'+esc(ex?ex.name:'')+'">'
+    +'<label for="a-addr">Адрес</label><input id="a-addr" autocomplete="off" value="'+esc(ex?ex.address:'')+'">'
+    +'<p class="err" id="a-err" role="alert"></p>'
+    +'<div class="actions">'+(ex?'<button type="button" class="btn danger" id="a-del">Удалить</button>':'')
+    +'<span class="sp"></span><button type="button" class="btn" id="a-cancel">Отмена</button><button type="submit" class="btn primary">Сохранить</button></div>'
+    +'</form>');
+  $('a-cancel').addEventListener('click',closeModal);
+  var del=$('a-del');
+  if(del){del.addEventListener('click',function(){
+    if(!del.dataset.sure){del.dataset.sure='1';del.textContent=n?'Удалить вместе с бронями ('+n+')?':'Точно удалить?';del.className='btn confirm';return;}
+    delApt(ex.id).then(closeModal,function(){$('a-err').textContent='Не удалось удалить. Проверьте соединение и попробуйте ещё раз.';});
+  });}
+  $('af').addEventListener('submit',function(e){
+    e.preventDefault();
+    var name=$('a-name').value.trim();
+    if(!name){$('a-err').textContent='Введите название.';$('a-name').focus();return;}
+    var rec={id:ex?ex.id:uid(),name:name,address:$('a-addr').value.trim(),created:ex&&ex.created?ex.created:Date.now()};
+    putApt(rec).then(closeModal,function(){$('a-err').textContent='Не удалось сохранить. Проверьте соединение и попробуйте ещё раз.';});
+  });
+  setTimeout(function(){$('a-name').focus();},0);
+}
+
+/* ---------- events ---------- */
+document.addEventListener('click',function(e){
+  var el=e.target.closest('[data-act]');
+  if(!el)return;
+  var act=el.dataset.act;
+  if(act==='tab'){state.tab=el.dataset.tab;render();}
+  else if(act==='shift'){state.start=addDays(state.start,+el.dataset.n);render();}
+  else if(act==='today'){state.start=addDays(todayStr(),-2);render();}
+  else if(act==='cell'){openBooking({aptId:el.dataset.apt,date:el.dataset.date});}
+  else if(act==='bar'){openBooking({id:el.dataset.id});}
+  else if(act==='newBooking'){openBooking({});}
+  else if(act==='newApt'){openApt(null);}
+  else if(act==='editApt'){openApt(el.dataset.id);}
+  else if(act==='demo'){
+    el.disabled=true;
+    loadDemo().then(function(){state.tab='grid';render();},function(){toast('Не удалось загрузить пример');render();});
+  }
+});
+
+/* ---------- start ---------- */
+$('today-label').textContent=new Date().toLocaleDateString('ru-RU',{weekday:'long',day:'numeric',month:'long'});
+function start(data){
+  state.tab=(data&&data.tab)||'grid';
+  state.start=(data&&data.start)||addDays(todayStr(),-2);
+  render();
+  initStorage();
+}
+if(window.claude&&window.claude.hot&&typeof window.claude.hot.snapshot==='function'){
+  window.claude.hot.snapshot(function(){return {tab:state.tab,start:state.start};});
+}
+if(window.claude&&window.claude.hot&&typeof window.claude.hot.ready==='function'){window.claude.hot.ready(start);}
+else{start((window.claude&&window.claude.hot&&window.claude.hot.data)||{});}
+})();
+</script>
+<script>
+if('serviceWorker' in navigator && /^https?:$/.test(location.protocol)){
+  window.addEventListener('load',function(){try{navigator.serviceWorker.register('sw.js').catch(function(){});}catch(e){}});
+}
+</script>
+</body>
+</html>
