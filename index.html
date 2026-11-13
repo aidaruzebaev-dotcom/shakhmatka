@@ -128,6 +128,8 @@ h2.day{font:600 15px/1.3 var(--font-body);margin:20px 0 8px}
 .auth .actions .btn{width:100%;padding:12px}
 .ical{margin-top:6px}
 .ical-row{display:flex;gap:8px}
+.ical summary{cursor:pointer;font-weight:600;margin:14px 0 4px}
+.plat{border-top:1px solid var(--line);margin-top:10px;padding-top:8px}
 .ical-row input{flex:1;min-width:0;font-size:12px}
 .link{background:none;border:0;padding:0;color:var(--accent);text-decoration:underline;cursor:pointer;font:inherit}
 .account{margin-top:24px;padding-top:16px;border-top:1px solid var(--line)}
@@ -234,12 +236,12 @@ function sessionLoad(){try{var r=localStorage.getItem(SESSION_KEY);return r?JSON
 function sessionSave(s){try{if(s)localStorage.setItem(SESSION_KEY,JSON.stringify(s));else localStorage.removeItem(SESSION_KEY);}catch(e){}}
 
 /* field names: app uses camelCase, database uses snake_case */
-function aptToRow(a){return {id:a.id,name:a.name,address:a.address||'',created:new Date(a.created||Date.now()).toISOString()};}
-function rowToApt(r){return {id:r.id,name:r.name,address:r.address||'',created:Date.parse(r.created)||0,icalToken:r.ical_token};}
+function aptToRow(a){return {id:a.id,name:a.name,address:a.address||'',ical_import_urls:a.icalImport||{},created:new Date(a.created||Date.now()).toISOString()};}
+function rowToApt(r){return {id:r.id,name:r.name,address:r.address||'',created:Date.parse(r.created)||0,icalToken:r.ical_token,icalImport:r.ical_import_urls||{}};}
 function bookingToRow(b){return {id:b.id,apartment_id:b.apartmentId,guest_name:b.guestName||'',phone:b.phone||'',check_in:b.checkIn,check_out:b.checkOut,
   amount:b.amount||0,prepaid:b.prepaid||0,source:b.source||'Напрямую',note:b.note||'',created:new Date(b.created||Date.now()).toISOString()};}
 function rowToBooking(r){return {id:r.id,apartmentId:r.apartment_id,guestName:r.guest_name||'',phone:r.phone||'',checkIn:r.check_in,checkOut:r.check_out,
-  amount:Number(r.amount)||0,prepaid:Number(r.prepaid)||0,source:r.source||'Напрямую',note:r.note||'',created:Date.parse(r.created)||0};}
+  amount:Number(r.amount)||0,prepaid:Number(r.prepaid)||0,source:r.source||'Напрямую',note:r.note||'',externalId:r.external_id||null,created:Date.parse(r.created)||0};}
 
 function authCall(path,body){
   return fetch(SB_URL+'/auth/v1/'+path,{method:'POST',headers:{'apikey':SB_KEY,'Content-Type':'application/json'},body:JSON.stringify(body)})
@@ -525,7 +527,7 @@ function todayItem(b,isIn){
     +'</button></div>';
 }
 function aptsHtml(){
-  var h='<div class="toolbar"><span class="sp"></span><button class="btn primary" type="button" data-act="newApt">+ Квартира</button></div>';
+  var h='<div class="toolbar">'+(state.mode==='cloud'?'<button class="btn" type="button" data-act="refreshPlat">↻ Обновить с площадок</button>':'')+'<span class="sp"></span><button class="btn primary" type="button" data-act="newApt">+ Квартира</button></div>';
   if(!state.apartments.length)return h+emptyHtml()+accountHtml();
   h+='<div class="list">';
   state.apartments.forEach(function(a){
@@ -613,6 +615,7 @@ function openBooking(opts){
   var srcOpts=SOURCES.map(function(s){return '<option'+(s===src?' selected':'')+'>'+esc(s)+'</option>';}).join('');
   openSheet('<form class="sheet" id="bf" novalidate role="dialog" aria-modal="true" aria-labelledby="mt">'
     +'<h2 id="mt">'+(ex?'Бронь':'Новая бронь')+'</h2>'
+    +(ex&&ex.externalId?'<p class="hint">Бронь пришла с площадки «'+esc(ex.source)+'». Даты обновляются сами; если её отменят на площадке, она исчезнет. Имя, телефон и сумму можно дописать.</p>':'')
     +'<label for="f-apt">Квартира</label><select id="f-apt">'+aptOpts+'</select>'
     +'<div class="two"><div><label for="f-in">Заезд</label><input type="date" id="f-in" value="'+cin+'"></div>'
     +'<div><label for="f-out">Выезд</label><input type="date" id="f-out" value="'+cout+'"></div></div>'
@@ -659,13 +662,34 @@ function openBooking(opts){
   });
   setTimeout(function(){var f=$(ex?'f-guest':'f-guest');if(f)f.focus();},0);
 }
-function icalUrl(a){return SB_URL+'/functions/v1/ical?t='+a.icalToken;}
+var PLATFORMS=['Авито','Циан','Островок','Суточно.ру','Яндекс Путешествия','Другое'];
+function icalUrl(a,src){return SB_URL+'/functions/v1/ical?t='+a.icalToken+'&s='+encodeURIComponent(src);}
 function icalBlock(a){
   if(state.mode!=='cloud')return '';
-  if(!a||!a.icalToken)return '<p class="hint">После сохранения здесь появится ссылка-календарь для площадок.</p>';
-  return '<div class="ical"><label for="a-ical">Календарь для площадок</label>'
-    +'<div class="ical-row"><input id="a-ical" readonly value="'+esc(icalUrl(a))+'"><button type="button" class="btn" id="a-copy">Скопировать</button></div>'
-    +'<p class="hint">Вставьте эту ссылку в объявлении на площадке (Циан, Суточно.ру и другие) в пункте «Синхронизация календаря» или «Импорт календаря iCal». Даты, занятые в шахматке, закроются там сами.</p></div>';
+  if(!a||!a.icalToken)return '<p class="hint">После сохранения здесь появятся ссылки для синхронизации с площадками.</p>';
+  var imp=a.icalImport||{};
+  var h='<details class="ical"'+(Object.keys(imp).length?'':' open')+'><summary>Синхронизация с площадками</summary>'
+    +'<p class="hint">Для каждой площадки два шага. 1) Нашу ссылку вставьте в объявлении на площадке (пункт «Синхронизация календаря» или «Импорт iCal»): даты из шахматки закроются там сами. 2) Ссылку календаря с площадки (пункт «Экспорт календаря» или «Ссылка iCal») вставьте сюда: брони с площадки появятся в шахматке сами, примерно раз в 15 минут.</p>';
+  PLATFORMS.forEach(function(p,i){
+    h+='<div class="plat"><b>'+esc(p)+'</b>'
+      +'<label for="ix-'+i+'">1. Ссылка для площадки</label>'
+      +'<div class="ical-row"><input id="ix-'+i+'" readonly value="'+esc(icalUrl(a,p))+'"><button type="button" class="btn copy" data-for="ix-'+i+'">Скопировать</button></div>'
+      +'<label for="im-'+i+'">2. Ссылка с площадки</label>'
+      +'<input id="im-'+i+'" class="imp" data-src="'+esc(p)+'" inputmode="url" autocomplete="off" placeholder="https://… (можно оставить пустым)" value="'+esc(imp[p]||'')+'"></div>';
+  });
+  return h+'</details>';
+}
+function readImports(){
+  var r={};
+  document.querySelectorAll('#af input.imp').forEach(function(inp){var v=inp.value.trim();if(v)r[inp.dataset.src]=v;});
+  return r;
+}
+function refreshFromPlatforms(quiet){
+  if(state.mode!=='cloud')return Promise.resolve();
+  return api('POST','rpc/ical_refresh_mine',{}).then(function(n){
+    if(!quiet)toast(n?'Проверяю площадки, брони появятся через минуту':'Ссылки с площадок ещё не добавлены');
+    if(n){setTimeout(pull,70000);setTimeout(pull,130000);}
+  },function(e){if(!handleAuthError(e)&&!quiet)toast('Нет связи, попробуйте позже');});
 }
 function openApt(id){
   var ex=id?aptById(id):null;
@@ -680,13 +704,12 @@ function openApt(id){
     +'<span class="sp"></span><button type="button" class="btn" id="a-cancel">Отмена</button><button type="submit" class="btn primary">Сохранить</button></div>'
     +'</form>');
   $('a-cancel').addEventListener('click',closeModal);
-  var cp=$('a-copy');
-  if(cp){cp.addEventListener('click',function(){
-    var inp=$('a-ical');
+  document.querySelectorAll('#af .copy').forEach(function(cp){cp.addEventListener('click',function(){
+    var inp=$(cp.dataset.for);
     function done(){cp.textContent='Скопировано ✓';setTimeout(function(){cp.textContent='Скопировать';},2500);}
-    if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(inp.value).then(done,function(){inp.select();document.execCommand('copy');done();});}
-    else{inp.select();document.execCommand('copy');done();}
-  });}
+    function fallback(){inp.removeAttribute('readonly');inp.select();try{document.execCommand('copy');}catch(e){}inp.setAttribute('readonly','');done();}
+    if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(inp.value).then(done,fallback);}else{fallback();}
+  });});
   var del=$('a-del');
   if(del){del.addEventListener('click',function(){
     if(!del.dataset.sure){del.dataset.sure='1';del.textContent=n?'Удалить вместе с бронями ('+n+')?':'Точно удалить?';del.className='btn confirm';return;}
@@ -696,8 +719,12 @@ function openApt(id){
     e.preventDefault();
     var name=$('a-name').value.trim();
     if(!name){$('a-err').textContent='Введите название.';$('a-name').focus();return;}
-    var rec={id:ex?ex.id:uid(),name:name,address:$('a-addr').value.trim(),created:ex&&ex.created?ex.created:Date.now()};
-    putApt(rec).then(closeModal,function(){$('a-err').textContent='Не удалось сохранить. Проверьте соединение и попробуйте ещё раз.';});
+    var imports=ex?readImports():{};
+    var bad=Object.keys(imports).filter(function(k){return !/^(https?|webcal):\/\//i.test(imports[k]);});
+    if(bad.length){$('a-err').textContent='Ссылка для «'+bad[0]+'» должна начинаться с https://';return;}
+    var changed=ex&&JSON.stringify(imports)!==JSON.stringify(ex.icalImport||{});
+    var rec={id:ex?ex.id:uid(),name:name,address:$('a-addr').value.trim(),icalToken:ex?ex.icalToken:undefined,icalImport:ex?imports:{},created:ex&&ex.created?ex.created:Date.now()};
+    putApt(rec).then(function(){closeModal();if(changed&&Object.keys(imports).length)refreshFromPlatforms(false);},function(){$('a-err').textContent='Не удалось сохранить. Проверьте соединение и попробуйте ещё раз.';});
   });
   setTimeout(function(){$('a-name').focus();},0);
 }
@@ -716,6 +743,7 @@ document.addEventListener('click',function(e){
   else if(act==='newApt'){openApt(null);}
   else if(act==='editApt'){openApt(el.dataset.id);}
   else if(act==='logout'){signOut();}
+  else if(act==='refreshPlat'){refreshFromPlatforms(false);}
   else if(act==='toLogin'){stopPolling();state.mode='auth';state.authNew=false;render();}
   else if(act==='authSwitch'){state.authNew=!state.authNew;state.authEmail=$('l-email')?$('l-email').value.trim():state.authEmail;render();}
   else if(act==='localOnly'){useLocalOnly();}
