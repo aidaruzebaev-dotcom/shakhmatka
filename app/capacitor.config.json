@@ -1,0 +1,12 @@
+{
+  "appId": "ru.shakhmatka.app",
+  "appName": "Шахматка",
+  "webDir": "www",
+  "server": {
+    "url": "https://aidaruzebaev-dotcom.github.io/shakhmatka/",
+    "androidScheme": "https"
+  },
+  "android": {
+    "backgroundColor": "#0E6B62"
+  }
+}
