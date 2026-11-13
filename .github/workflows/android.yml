@@ -3,6 +3,7 @@ name: Android-приложение
 on:
   push:
     branches: [main]
+    paths: ['app/**', '.github/workflows/android.yml']
   workflow_dispatch:
 
 permissions:

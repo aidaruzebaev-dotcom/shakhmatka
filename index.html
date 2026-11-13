@@ -115,13 +115,19 @@ h2.day{font:600 15px/1.3 var(--font-body);margin:20px 0 8px}
 .overlay{position:fixed;inset:0;background:rgba(10,20,18,.5);display:flex;align-items:center;justify-content:center;padding:16px;z-index:50}
 .sheet{background:var(--surface);border-radius:14px;max-width:520px;width:100%;max-height:100%;overflow:auto;padding:20px;border:1px solid var(--line)}
 .sheet h2{font:600 17px/1.3 var(--font-display);margin:0 0 8px}
-.sheet label{display:block;font-size:12px;color:var(--muted);margin:12px 0 4px}
-.sheet input,.sheet select,.sheet textarea{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px 10px}
+.sheet label,.auth label{display:block;font-size:12px;color:var(--muted);margin:12px 0 4px}
+.sheet input,.sheet select,.sheet textarea,.auth input{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px 10px}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .hint{font-size:12px;color:var(--muted);margin:6px 0 0}
 .err{color:var(--danger);font-size:13px;min-height:18px;margin:10px 0 0}
 .actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;align-items:center}
 .actions .sp{flex:1}
+.auth{max-width:380px;margin:24px auto;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:20px}
+.auth h2{margin:0 0 6px}
+.auth input{width:100%;box-sizing:border-box}
+.auth .actions .btn{width:100%;padding:12px}
+.link{background:none;border:0;padding:0;color:var(--accent);text-decoration:underline;cursor:pointer;font:inherit}
+.account{margin-top:24px;padding-top:16px;border-top:1px solid var(--line)}
 .toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:10px;font-size:14px;z-index:60;max-width:90%}
 @media (max-width:640px){
   :root{--cell:52px;--name:108px}
@@ -164,7 +170,7 @@ var MON=['янв','фев','мар','апр','мая','июн','июл','авг'
 var DAYS=21;
 var LS_KEY='rental_board_v1';
 
-var state={apartments:[],bookings:[],mode:'loading',loaded:{a:false,b:false},tab:'grid',start:null,db:null,syncError:false};
+var state={apartments:[],bookings:[],mode:'loading',loaded:{a:false,b:false},tab:'grid',start:null,session:null,syncError:false};
 
 /* ---------- helpers ---------- */
 function pad(n){return String(n).padStart(2,'0');}
@@ -195,7 +201,14 @@ function toast(text){
   toastTimer=setTimeout(function(){root.innerHTML='';},3500);
 }
 
-/* ---------- storage: shared database when available, this device otherwise ---------- */
+/* ---------- storage: shared Supabase database, with a copy on this device ---------- */
+var SB_URL='https://cylfedebmpeybfypkdkk.supabase.co';
+var SB_KEY='sb_publishable_c-zvHjceKEeUL8LSu7wTng_vnvgmPBw';
+var SESSION_KEY='shakhmatka_session_v1';
+var CACHE_KEY='shakhmatka_cache_v1';
+var POLL_MS=20000;
+var pollTimer=null;
+
 function lsLoad(){
   try{var r=localStorage.getItem(LS_KEY);if(r){var d=JSON.parse(r);state.apartments=d.apartments||[];state.bookings=d.bookings||[];}}catch(e){}
   sortApts();
@@ -203,58 +216,163 @@ function lsLoad(){
 function lsSave(){
   try{localStorage.setItem(LS_KEY,JSON.stringify({apartments:state.apartments,bookings:state.bookings}));}catch(e){}
 }
+function localData(){
+  try{var r=localStorage.getItem(LS_KEY);if(r){var d=JSON.parse(r);return {apartments:d.apartments||[],bookings:d.bookings||[]};}}catch(e){}
+  return {apartments:[],bookings:[]};
+}
+function cacheSave(){
+  try{localStorage.setItem(CACHE_KEY,JSON.stringify({email:state.session&&state.session.email,apartments:state.apartments,bookings:state.bookings}));}catch(e){}
+}
+function cacheLoad(){
+  try{var r=localStorage.getItem(CACHE_KEY);if(r){var d=JSON.parse(r);if(state.session&&d.email===state.session.email){state.apartments=d.apartments||[];state.bookings=d.bookings||[];sortApts();return true;}}}catch(e){}
+  return false;
+}
+function sessionLoad(){try{var r=localStorage.getItem(SESSION_KEY);return r?JSON.parse(r):null;}catch(e){return null;}}
+function sessionSave(s){try{if(s)localStorage.setItem(SESSION_KEY,JSON.stringify(s));else localStorage.removeItem(SESSION_KEY);}catch(e){}}
+
+/* field names: app uses camelCase, database uses snake_case */
+function aptToRow(a){return {id:a.id,name:a.name,address:a.address||'',created:new Date(a.created||Date.now()).toISOString()};}
+function rowToApt(r){return {id:r.id,name:r.name,address:r.address||'',created:Date.parse(r.created)||0,icalToken:r.ical_token};}
+function bookingToRow(b){return {id:b.id,apartment_id:b.apartmentId,guest_name:b.guestName||'',phone:b.phone||'',check_in:b.checkIn,check_out:b.checkOut,
+  amount:b.amount||0,prepaid:b.prepaid||0,source:b.source||'Напрямую',note:b.note||'',created:new Date(b.created||Date.now()).toISOString()};}
+function rowToBooking(r){return {id:r.id,apartmentId:r.apartment_id,guestName:r.guest_name||'',phone:r.phone||'',checkIn:r.check_in,checkOut:r.check_out,
+  amount:Number(r.amount)||0,prepaid:Number(r.prepaid)||0,source:r.source||'Напрямую',note:r.note||'',created:Date.parse(r.created)||0};}
+
+function authCall(path,body){
+  return fetch(SB_URL+'/auth/v1/'+path,{method:'POST',headers:{'apikey':SB_KEY,'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(function(res){return res.json().catch(function(){return {};}).then(function(j){if(!res.ok){var e=new Error(j.msg||j.error_description||j.message||('Ошибка '+res.status));e.status=res.status;e.code=j.error_code||j.code;throw e;}return j;});});
+}
+function takeSession(j){
+  var s={access:j.access_token,refresh:j.refresh_token,expires:Date.now()+((j.expires_in||3600)-60)*1000,email:(j.user&&j.user.email)||''};
+  state.session=s;sessionSave(s);return s;
+}
+function freshToken(){
+  var s=state.session;
+  if(!s)return Promise.reject(Object.assign(new Error('no session'),{status:401}));
+  if(Date.now()<s.expires)return Promise.resolve(s.access);
+  return authCall('token?grant_type=refresh_token',{refresh_token:s.refresh}).then(function(j){return takeSession(j).access;});
+}
+function api(method,path,body,prefer){
+  return freshToken().then(function(tok){
+    var h={'apikey':SB_KEY,'Authorization':'Bearer '+tok,'Content-Type':'application/json'};
+    if(prefer)h['Prefer']=prefer;
+    return fetch(SB_URL+'/rest/v1/'+path,{method:method,headers:h,body:body?JSON.stringify(body):undefined});
+  }).then(function(res){
+    if(!res.ok){return res.json().catch(function(){return {};}).then(function(j){var e=new Error(j.message||('Ошибка '+res.status));e.status=res.status;throw e;});}
+    return res.status===204?null:res.json().catch(function(){return null;});
+  });
+}
+function handleAuthError(e){
+  if(e&&(e.status===401||(e.status===400&&state.session))){
+    state.session=null;sessionSave(null);stopPolling();state.mode='auth';render();
+    toast('Войдите заново');return true;
+  }
+  return false;
+}
+
+function pull(){
+  if(state.mode!=='cloud')return Promise.resolve();
+  return Promise.all([
+    api('GET','apartments?select=*'),
+    api('GET','bookings?select=*')
+  ]).then(function(r){
+    state.apartments=(r[0]||[]).map(rowToApt);sortApts();
+    state.bookings=(r[1]||[]).map(rowToBooking);
+    state.loaded.a=true;state.loaded.b=true;state.syncError=false;
+    cacheSave();
+    if(!$('modal').innerHTML)render();else renderBadge();
+  },function(e){
+    if(handleAuthError(e))return;
+    state.syncError=true;state.loaded.a=true;state.loaded.b=true;render();
+  });
+}
+function startPolling(){
+  stopPolling();
+  pollTimer=setInterval(function(){if(!document.hidden)pull();},POLL_MS);
+}
+function stopPolling(){if(pollTimer){clearInterval(pollTimer);pollTimer=null;}}
+document.addEventListener('visibilitychange',function(){if(!document.hidden&&state.mode==='cloud')pull();});
+window.addEventListener('online',function(){if(state.mode==='cloud')pull();});
+
+function goCloud(){
+  state.mode='cloud';
+  if(cacheLoad()){state.loaded.a=true;state.loaded.b=true;}
+  render();
+  return pull().then(function(){
+    if(state.mode!=='cloud'||state.syncError)return;
+    var loc=localData();
+    if(!state.apartments.length&&loc.apartments.length){
+      toast('Переношу данные с этого устройства в общую базу…');
+      return api('POST','apartments',loc.apartments.map(aptToRow),'resolution=merge-duplicates,return=minimal')
+        .then(function(){return loc.bookings.length?api('POST','bookings',loc.bookings.map(bookingToRow),'resolution=merge-duplicates,return=minimal'):null;})
+        .then(function(){try{localStorage.setItem(LS_KEY+'_moved',localStorage.getItem(LS_KEY));localStorage.removeItem(LS_KEY);}catch(e){}return pull();})
+        .then(function(){toast('Данные перенесены в общую базу');},function(){toast('Не удалось перенести старые данные');});
+    }
+  }).then(startPolling);
+}
 function goLocal(){
-  state.mode='local';state.loaded.a=true;state.loaded.b=true;lsLoad();render();
+  stopPolling();state.mode='local';state.loaded.a=true;state.loaded.b=true;lsLoad();render();
 }
 function initStorage(){
-  var c=window.claude;
-  if(!c||typeof c.use!=='function'){goLocal();return;}
-  var p;
-  try{p=c.use('db');}catch(e){goLocal();return;}
-  Promise.resolve(p).then(function(db){
-    if(!db){goLocal();return;}
-    state.db=db;state.mode='cloud';subscribe();render();
-  },function(){goLocal();});
+  state.session=sessionLoad();
+  if(state.session){goCloud();}
+  else if(localStorage.getItem('shakhmatka_local_only')==='1'){goLocal();}
+  else{state.mode='auth';render();}
 }
-function subscribe(){
-  var db=state.db;
-  var timer=setTimeout(function(){state.loaded.a=true;state.loaded.b=true;render();},10000);
-  function check(){if(state.loaded.a&&state.loaded.b)clearTimeout(timer);}
-  function fail(){state.syncError=true;state.loaded.a=true;state.loaded.b=true;clearTimeout(timer);render();}
-  db.collection('apartments').onSnapshot(function(snap){
-    state.apartments=snap.docs.map(function(d){var o={};var data=d.data()||{};for(var k in data)o[k]=data[k];o.id=d.id;return o;});
-    sortApts();
-    if(!snap.metadata.fromCache||snap.size>0){state.loaded.a=true;}
-    state.syncError=false;check();render();
-  },fail);
-  db.collection('bookings').onSnapshot(function(snap){
-    state.bookings=snap.docs.map(function(d){var o={};var data=d.data()||{};for(var k in data)o[k]=data[k];o.id=d.id;return o;});
-    if(!snap.metadata.fromCache||snap.size>0){state.loaded.b=true;}
-    state.syncError=false;check();render();
-  },fail);
+function signIn(email,password,isNew){
+  var p=isNew?authCall('signup',{email:email,password:password}):authCall('token?grant_type=password',{email:email,password:password});
+  return p.then(function(j){
+    if(!j.access_token){throw new Error('Вход не выполнен. Попробуйте ещё раз.');}
+    takeSession(j);
+    try{localStorage.removeItem('shakhmatka_local_only');}catch(e){}
+    return goCloud();
+  });
 }
+function signOut(){
+  stopPolling();state.session=null;sessionSave(null);
+  try{localStorage.removeItem(CACHE_KEY);}catch(e){}
+  state.apartments=[];state.bookings=[];state.mode='auth';render();
+}
+function useLocalOnly(){
+  try{localStorage.setItem('shakhmatka_local_only','1');}catch(e){}
+  goLocal();
+}
+
 function upsert(arr,rec){
   for(var i=0;i<arr.length;i++){if(arr[i].id===rec.id){arr[i]=rec;return;}}
   arr.push(rec);
 }
+function cloudWrite(p,applyLocal){
+  return p.then(function(){applyLocal();cacheSave();render();pull();},function(e){
+    if(handleAuthError(e))throw e;
+    state.syncError=true;renderBadge();throw e;
+  });
+}
 function putApt(a){
-  if(state.mode==='cloud'){return state.db.doc('apartments/'+a.id).set(stripId(a));}
+  if(state.mode==='cloud'){
+    return cloudWrite(api('POST','apartments',[aptToRow(a)],'resolution=merge-duplicates,return=minimal'),function(){upsert(state.apartments,a);sortApts();});
+  }
   upsert(state.apartments,a);sortApts();lsSave();render();return Promise.resolve();
 }
 function putBooking(b){
-  if(state.mode==='cloud'){return state.db.doc('bookings/'+b.id).set(stripId(b));}
+  if(state.mode==='cloud'){
+    return cloudWrite(api('POST','bookings',[bookingToRow(b)],'resolution=merge-duplicates,return=minimal'),function(){upsert(state.bookings,b);});
+  }
   upsert(state.bookings,b);lsSave();render();return Promise.resolve();
 }
 function delBooking(id){
-  if(state.mode==='cloud'){return state.db.doc('bookings/'+id).delete();}
+  if(state.mode==='cloud'){
+    return cloudWrite(api('DELETE','bookings?id=eq.'+encodeURIComponent(id)),function(){state.bookings=state.bookings.filter(function(b){return b.id!==id;});});
+  }
   state.bookings=state.bookings.filter(function(b){return b.id!==id;});lsSave();render();return Promise.resolve();
 }
 function delApt(id){
   if(state.mode==='cloud'){
-    var ids=state.bookings.filter(function(b){return b.apartmentId===id;}).map(function(b){return b.id;});
-    var chain=Promise.resolve();
-    ids.forEach(function(bid){chain=chain.then(function(){return state.db.doc('bookings/'+bid).delete();});});
-    return chain.then(function(){return state.db.doc('apartments/'+id).delete();});
+    /* bookings of this apartment are removed by the database (on delete cascade) */
+    return cloudWrite(api('DELETE','apartments?id=eq.'+encodeURIComponent(id)),function(){
+      state.bookings=state.bookings.filter(function(b){return b.apartmentId!==id;});
+      state.apartments=state.apartments.filter(function(a){return a.id!==id;});
+    });
   }
   state.bookings=state.bookings.filter(function(b){return b.apartmentId!==id;});
   state.apartments=state.apartments.filter(function(a){return a.id!==id;});
@@ -268,16 +386,16 @@ function conflict(aptId,a,b,ignoreId){
   return null;
 }
 function loadDemo(){
-  var t=todayStr();var now=Date.now();
+  var t=todayStr();var now=Date.now();var p=uid();
   var apts=[
-    {id:'d1',name:'Студия на Тверской',address:'ул. Тверская, 12',created:now},
-    {id:'d2',name:'Однушка у метро',address:'ул. Ленина, 5',created:now+1},
-    {id:'d3',name:'Двушка с балконом',address:'пр. Мира, 40',created:now+2},
-    {id:'d4',name:'Лофт в центре',address:'ул. Садовая, 3',created:now+3}
+    {id:p+'d1',name:'Студия на Тверской',address:'ул. Тверская, 12',created:now},
+    {id:p+'d2',name:'Однушка у метро',address:'ул. Ленина, 5',created:now+1},
+    {id:p+'d3',name:'Двушка с балконом',address:'пр. Мира, 40',created:now+2},
+    {id:p+'d4',name:'Лофт в центре',address:'ул. Садовая, 3',created:now+3}
   ];
   var bks=[];
   function add(i,inD,n,guest,src,amount,prepaid,phone){
-    bks.push({id:'db'+i+'x'+(inD+10),apartmentId:apts[i].id,guestName:guest,phone:phone||'',checkIn:addDays(t,inD),checkOut:addDays(t,inD+n),amount:amount,prepaid:prepaid,source:src,note:'',created:now+bks.length});
+    bks.push({id:p+'b'+i+'x'+(inD+10),apartmentId:apts[i].id,guestName:guest,phone:phone||'',checkIn:addDays(t,inD),checkOut:addDays(t,inD+n),amount:amount,prepaid:prepaid,source:src,note:'',created:now+bks.length});
   }
   add(0,-3,5,'Иван Петров','Авито',15000,15000,'+7 900 111-22-33');
   add(0,2,3,'Анна Смирнова','Циан',10500,3000,'+7 900 222-33-44');
@@ -290,6 +408,11 @@ function loadDemo(){
   add(3,-6,6,'Павел Ершов','Напрямую',24000,24000);
   add(3,1,2,'Наталья Громова','Циан',8000,8000);
   add(3,4,5,'Кирилл Лебедев','Авито',20000,4000);
+  if(state.mode==='cloud'){
+    return api('POST','apartments',apts.map(aptToRow),'resolution=merge-duplicates,return=minimal')
+      .then(function(){return api('POST','bookings',bks.map(bookingToRow),'resolution=merge-duplicates,return=minimal');})
+      .then(pull);
+  }
   var chain=Promise.resolve();
   apts.forEach(function(a){chain=chain.then(function(){return putApt(a);});});
   bks.forEach(function(b){chain=chain.then(function(){return putBooking(b);});});
@@ -299,9 +422,10 @@ function loadDemo(){
 /* ---------- rendering ---------- */
 function renderBadge(){
   var b=$('badge');var cls='badge',txt='';
-  if(state.syncError){cls+=' bad';txt='Нет связи с хранилищем';}
-  else if(state.mode==='cloud'){cls+=' ok';txt='Данные общие для всех устройств';}
-  else if(state.mode==='local'){txt='Данные только на этом устройстве';}
+  if(state.mode==='auth'){txt='Нужен вход';}
+  else if(state.syncError){cls+=' bad';txt='Нет интернета, показываю сохранённое';}
+  else if(state.mode==='cloud'){cls+=' ok';txt='Общая база';}
+  else if(state.mode==='local'){txt='Только на этом устройстве';}
   else{txt='Загрузка';}
   b.className=cls;b.innerHTML='<i></i><em>'+esc(txt)+'</em>';
 }
@@ -399,20 +523,67 @@ function todayItem(b,isIn){
 }
 function aptsHtml(){
   var h='<div class="toolbar"><span class="sp"></span><button class="btn primary" type="button" data-act="newApt">+ Квартира</button></div>';
-  if(!state.apartments.length)return h+emptyHtml();
+  if(!state.apartments.length)return h+emptyHtml()+accountHtml();
   h+='<div class="list">';
   state.apartments.forEach(function(a){
     var n=state.bookings.filter(function(b){return b.apartmentId===a.id;}).length;
     h+='<div><button type="button" class="item" data-act="editApt" data-id="'+esc(a.id)+'"><span class="grow"><b>'+esc(a.name)+'</b><span>'+esc((a.address?a.address+' · ':'')+'броней: '+n)+'</span></span><span class="note">Изменить</span></button></div>';
   });
   h+='</div>';
-  return h;
+  return h+accountHtml();
+}
+function accountHtml(){
+  if(state.mode==='cloud'){
+    return '<div class="account"><p class="note">Вы вошли как <b>'+esc(state.session&&state.session.email)+'</b>. Брони одинаковые на телефоне и компьютере: войдите там с этой же почтой и паролем.</p>'
+      +'<button class="btn" type="button" data-act="logout">Выйти</button></div>';
+  }
+  return '<div class="account"><p class="note">Сейчас брони хранятся только на этом устройстве. Войдите, чтобы они были и на телефоне, и на компьютере.</p>'
+    +'<button class="btn primary" type="button" data-act="toLogin">Войти</button></div>';
+}
+function authHtml(){
+  var reg=state.authNew;
+  return '<form class="auth" id="lf" novalidate>'
+    +'<h2>'+(reg?'Создать вход':'Вход')+'</h2>'
+    +'<p class="note">'+(reg?'Придумайте пароль. Потом с этой почтой и паролем можно войти на любом телефоне и компьютере, и брони будут везде одинаковые.':'Войдите, чтобы брони были одинаковыми на телефоне и компьютере.')+'</p>'
+    +'<label for="l-email">Почта</label><input id="l-email" type="email" autocomplete="email" inputmode="email" value="'+esc(state.authEmail||'')+'">'
+    +'<label for="l-pass">Пароль'+(reg?' (не меньше 6 знаков)':'')+'</label><input id="l-pass" type="password" autocomplete="'+(reg?'new-password':'current-password')+'">'
+    +'<p class="err" id="l-err" role="alert"></p>'
+    +'<div class="actions"><button type="submit" class="btn primary" id="l-go">'+(reg?'Создать и войти':'Войти')+'</button></div>'
+    +'<p class="note"><button type="button" class="link" data-act="authSwitch">'+(reg?'У меня уже есть вход':'Первый раз? Создать вход')+'</button></p>'
+    +'<p class="note"><button type="button" class="link" data-act="localOnly">Пока без входа, только на этом устройстве</button></p>'
+    +'</form>';
+}
+function authError(e){
+  var m=String(e&&e.message||'');
+  if(e&&e.code==='invalid_credentials'||/invalid login/i.test(m))return 'Неверная почта или пароль.';
+  if(e&&e.code==='user_already_exists'||/already registered/i.test(m))return 'Эта почта уже зарегистрирована. Нажмите «У меня уже есть вход».';
+  if(e&&e.code==='signup_disabled'||/signups? not allowed/i.test(m))return 'Регистрация закрыта. Войдите с уже созданной почтой.';
+  if(/password/i.test(m))return 'Пароль слишком простой: нужно не меньше 6 знаков.';
+  if(/email/i.test(m))return 'Проверьте почту, похоже, в ней ошибка.';
+  if(e instanceof TypeError)return 'Нет интернета. Проверьте соединение.';
+  return 'Не получилось: '+m;
+}
+function bindAuth(){
+  var f=$('lf');if(!f)return;
+  f.addEventListener('submit',function(e){
+    e.preventDefault();
+    var email=$('l-email').value.trim(),pass=$('l-pass').value,err=$('l-err'),go=$('l-go');
+    err.textContent='';state.authEmail=email;
+    if(!/^\S+@\S+\.\S+$/.test(email)){err.textContent='Введите почту, например ivan@mail.ru';$('l-email').focus();return;}
+    if(pass.length<6){err.textContent='Пароль должен быть не меньше 6 знаков.';$('l-pass').focus();return;}
+    go.disabled=true;go.textContent='Подождите…';
+    signIn(email,pass,!!state.authNew).then(function(){state.authNew=false;},function(x){
+      go.disabled=false;go.textContent=state.authNew?'Создать и войти':'Войти';
+      err.textContent=authError(x);
+    });
+  });
 }
 function render(){
   if(!state.start)return;
   document.querySelectorAll('[data-tab]').forEach(function(b){b.setAttribute('aria-current',b.dataset.tab===state.tab?'page':'false');});
   renderBadge();
   var view=$('view'),sum=$('summary');
+  if(state.mode==='auth'){sum.innerHTML='';view.innerHTML=authHtml();bindAuth();return;}
   if(!(state.loaded.a&&state.loaded.b)){sum.innerHTML='';view.innerHTML='<p class="note">Загружаю данные…</p>';return;}
   if(state.tab==='apts'){sum.innerHTML='';view.innerHTML=aptsHtml();return;}
   if(!state.apartments.length){sum.innerHTML='';view.innerHTML=emptyHtml();return;}
@@ -526,6 +697,10 @@ document.addEventListener('click',function(e){
   else if(act==='newBooking'){openBooking({});}
   else if(act==='newApt'){openApt(null);}
   else if(act==='editApt'){openApt(el.dataset.id);}
+  else if(act==='logout'){signOut();}
+  else if(act==='toLogin'){stopPolling();state.mode='auth';state.authNew=false;render();}
+  else if(act==='authSwitch'){state.authNew=!state.authNew;state.authEmail=$('l-email')?$('l-email').value.trim():state.authEmail;render();}
+  else if(act==='localOnly'){useLocalOnly();}
   else if(act==='demo'){
     el.disabled=true;
     loadDemo().then(function(){state.tab='grid';render();},function(){toast('Не удалось загрузить пример');render();});

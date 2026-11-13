@@ -1,6 +1,6 @@
 // Кэширует само приложение, чтобы оно открывалось без интернета.
 // При выпуске новой версии поменяйте номер, и старый кэш удалится.
-const CACHE = 'shakhmatka-v1';
+const CACHE = 'shakhmatka-v2';
 const FILES = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
