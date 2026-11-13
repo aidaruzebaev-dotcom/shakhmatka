@@ -129,7 +129,13 @@ h2.day{font:600 15px/1.3 var(--font-body);margin:20px 0 8px}
 .ical{margin-top:6px}
 .ical-row{display:flex;gap:8px}
 .ical summary{cursor:pointer;font-weight:600;margin:14px 0 4px}
-.plat{border-top:1px solid var(--line);margin-top:10px;padding-top:8px}
+.plat{border:1px solid var(--line);border-radius:10px;margin-top:10px;padding:10px}
+.plat.add{border-style:dashed}
+.plat-head{display:flex;gap:10px;align-items:center}
+.plat-head a{font-size:13px;color:var(--accent)}
+.plat-head .sp{flex:1}
+.ph{font-size:15px;margin:16px 0 0}
+.ok-t{color:var(--accent)}
 .ical-row input{flex:1;min-width:0;font-size:12px}
 .link{background:none;border:0;padding:0;color:var(--accent);text-decoration:underline;cursor:pointer;font:inherit}
 .account{margin-top:24px;padding-top:16px;border-top:1px solid var(--line)}
@@ -236,8 +242,8 @@ function sessionLoad(){try{var r=localStorage.getItem(SESSION_KEY);return r?JSON
 function sessionSave(s){try{if(s)localStorage.setItem(SESSION_KEY,JSON.stringify(s));else localStorage.removeItem(SESSION_KEY);}catch(e){}}
 
 /* field names: app uses camelCase, database uses snake_case */
-function aptToRow(a){return {id:a.id,name:a.name,address:a.address||'',ical_import_urls:a.icalImport||{},created:new Date(a.created||Date.now()).toISOString()};}
-function rowToApt(r){return {id:r.id,name:r.name,address:r.address||'',created:Date.parse(r.created)||0,icalToken:r.ical_token,icalImport:r.ical_import_urls||{}};}
+function aptToRow(a){return {id:a.id,name:a.name,address:a.address||'',ical_import_urls:a.icalImport||{},listings:a.listings||{},created:new Date(a.created||Date.now()).toISOString()};}
+function rowToApt(r){return {id:r.id,name:r.name,address:r.address||'',created:Date.parse(r.created)||0,icalToken:r.ical_token,icalImport:r.ical_import_urls||{},listings:r.listings||{}};}
 function bookingToRow(b){return {id:b.id,apartment_id:b.apartmentId,guest_name:b.guestName||'',phone:b.phone||'',check_in:b.checkIn,check_out:b.checkOut,
   amount:b.amount||0,prepaid:b.prepaid||0,source:b.source||'Напрямую',note:b.note||'',created:new Date(b.created||Date.now()).toISOString()};}
 function rowToBooking(r){return {id:r.id,apartmentId:r.apartment_id,guestName:r.guest_name||'',phone:r.phone||'',checkIn:r.check_in,checkOut:r.check_out,
@@ -664,25 +670,64 @@ function openBooking(opts){
 }
 var PLATFORMS=['Авито','Циан','Островок','Суточно.ру','Яндекс Путешествия','Другое'];
 function icalUrl(a,src){return SB_URL+'/functions/v1/ical?t='+a.icalToken+'&s='+encodeURIComponent(src);}
+var PLAT_HOSTS=[['avito.ru','Авито'],['cian.ru','Циан'],['ostrovok.ru','Островок'],['sutochno.ru','Суточно.ру'],['travel.yandex.ru','Яндекс Путешествия'],['yandex.ru/travel','Яндекс Путешествия']];
+function detectPlatform(u){
+  var l=String(u).toLowerCase();
+  for(var i=0;i<PLAT_HOSTS.length;i++){if(l.indexOf(PLAT_HOSTS[i][0])>=0)return PLAT_HOSTS[i][1];}
+  return null;
+}
+var draft=null;
 function icalBlock(a){
   if(state.mode!=='cloud')return '';
-  if(!a||!a.icalToken)return '<p class="hint">После сохранения здесь появятся ссылки для синхронизации с площадками.</p>';
-  var imp=a.icalImport||{};
-  var h='<details class="ical"'+(Object.keys(imp).length?'':' open')+'><summary>Синхронизация с площадками</summary>'
-    +'<p class="hint">Для каждой площадки два шага. 1) Нашу ссылку вставьте в объявлении на площадке (пункт «Синхронизация календаря» или «Импорт iCal»): даты из шахматки закроются там сами. 2) Ссылку календаря с площадки (пункт «Экспорт календаря» или «Ссылка iCal») вставьте сюда: брони с площадки появятся в шахматке сами, примерно раз в 15 минут.</p>';
-  PLATFORMS.forEach(function(p,i){
-    h+='<div class="plat"><b>'+esc(p)+'</b>'
-      +'<label for="ix-'+i+'">1. Ссылка для площадки</label>'
-      +'<div class="ical-row"><input id="ix-'+i+'" readonly value="'+esc(icalUrl(a,p))+'"><button type="button" class="btn copy" data-for="ix-'+i+'">Скопировать</button></div>'
-      +'<label for="im-'+i+'">2. Ссылка с площадки</label>'
-      +'<input id="im-'+i+'" class="imp" data-src="'+esc(p)+'" inputmode="url" autocomplete="off" placeholder="https://… (можно оставить пустым)" value="'+esc(imp[p]||'')+'"></div>';
-  });
-  return h+'</details>';
+  return '<div class="ical"><h3 class="ph">Площадки</h3><div id="a-plat"></div></div>';
 }
-function readImports(){
-  var r={};
-  document.querySelectorAll('#af input.imp').forEach(function(inp){var v=inp.value.trim();if(v)r[inp.dataset.src]=v;});
-  return r;
+function platHtml(a){
+  var keys=[];
+  PLATFORMS.forEach(function(p){if(draft.listings[p]||draft.imports[p]||draft.open[p])keys.push(p);});
+  var h='';
+  keys.forEach(function(p){
+    var i=PLATFORMS.indexOf(p);
+    h+='<div class="plat"><div class="plat-head"><b>'+esc(p)+'</b>'
+      +(draft.listings[p]?'<a href="'+esc(draft.listings[p])+'" target="_blank" rel="noopener">объявление ↗</a>':'')
+      +'<span class="sp"></span><button type="button" class="link" data-off="'+esc(p)+'">отключить</button></div>';
+    if(a&&a.icalToken){
+      h+='<label for="ix-'+i+'">Шаг 1. Скопируйте и вставьте в объявлении на площадке в «Синхронизация календаря» / «Импорт календаря»</label>'
+        +'<div class="ical-row"><input id="ix-'+i+'" readonly value="'+esc(icalUrl(a,p))+'"><button type="button" class="btn copy" data-for="ix-'+i+'">Скопировать</button></div>'
+        +'<label for="im-'+i+'">Шаг 2. Вставьте сюда ссылку «Экспорт календаря» / «iCal» с площадки</label>'
+        +'<input id="im-'+i+'" class="imp" data-src="'+esc(p)+'" inputmode="url" autocomplete="off" placeholder="https://…" value="'+esc(draft.imports[p]||'')+'">'
+        +(draft.imports[p]?'<p class="hint ok-t">Брони с площадки подтягиваются сами.</p>':'');
+    }else{
+      h+='<p class="hint">Сохраните квартиру — сразу появятся ссылки для подключения.</p>';
+    }
+    h+='</div>';
+  });
+  h+='<div class="plat add"><label for="a-listing">'+(keys.length?'Добавить ещё площадку':'Подключить площадку')+': вставьте ссылку на объявление</label>'
+    +'<div class="ical-row"><input id="a-listing" inputmode="url" autocomplete="off" placeholder="https://www.cian.ru/rent/flat/…"><button type="button" class="btn primary" id="a-addplat">Подключить</button></div>'
+    +'<p class="hint" id="a-plat-msg"></p></div>';
+  return h;
+}
+function renderPlat(a){
+  var box=$('a-plat');if(!box)return;
+  box.innerHTML=platHtml(a);
+  box.querySelectorAll('.copy').forEach(function(cp){cp.addEventListener('click',function(){
+    var inp=$(cp.dataset.for);
+    function done(){cp.textContent='Скопировано ✓';setTimeout(function(){cp.textContent='Скопировать';},2500);}
+    function fallback(){inp.removeAttribute('readonly');inp.select();try{document.execCommand('copy');}catch(e){}inp.setAttribute('readonly','');done();}
+    if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(inp.value).then(done,fallback);}else{fallback();}
+  });});
+  box.querySelectorAll('input.imp').forEach(function(inp){inp.addEventListener('input',function(){draft.imports[inp.dataset.src]=inp.value.trim();});});
+  box.querySelectorAll('[data-off]').forEach(function(b){b.addEventListener('click',function(){
+    var p=b.dataset.off;delete draft.listings[p];delete draft.imports[p];delete draft.open[p];renderPlat(a);
+  });});
+  function add(){
+    var v=$('a-listing').value.trim(),msg=$('a-plat-msg');
+    if(!/^https?:\/\//i.test(v)){msg.textContent='Вставьте ссылку целиком, она начинается с https://';return;}
+    var p=detectPlatform(v)||'Другое';
+    draft.listings[p]=v;draft.open[p]=true;renderPlat(a);
+    var m=$('a-plat-msg');if(m)m.textContent='Подключаю: '+p+'. Не забудьте нажать «Сохранить».';
+  }
+  $('a-addplat').addEventListener('click',add);
+  $('a-listing').addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();add();}});
 }
 function refreshFromPlatforms(quiet){
   if(state.mode!=='cloud')return Promise.resolve();
@@ -703,13 +748,9 @@ function openApt(id){
     +'<div class="actions">'+(ex?'<button type="button" class="btn danger" id="a-del">Удалить</button>':'')
     +'<span class="sp"></span><button type="button" class="btn" id="a-cancel">Отмена</button><button type="submit" class="btn primary">Сохранить</button></div>'
     +'</form>');
+  draft={listings:Object.assign({},ex&&ex.listings),imports:Object.assign({},ex&&ex.icalImport),open:{}};
+  renderPlat(ex);
   $('a-cancel').addEventListener('click',closeModal);
-  document.querySelectorAll('#af .copy').forEach(function(cp){cp.addEventListener('click',function(){
-    var inp=$(cp.dataset.for);
-    function done(){cp.textContent='Скопировано ✓';setTimeout(function(){cp.textContent='Скопировать';},2500);}
-    function fallback(){inp.removeAttribute('readonly');inp.select();try{document.execCommand('copy');}catch(e){}inp.setAttribute('readonly','');done();}
-    if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(inp.value).then(done,fallback);}else{fallback();}
-  });});
   var del=$('a-del');
   if(del){del.addEventListener('click',function(){
     if(!del.dataset.sure){del.dataset.sure='1';del.textContent=n?'Удалить вместе с бронями ('+n+')?':'Точно удалить?';del.className='btn confirm';return;}
@@ -719,12 +760,13 @@ function openApt(id){
     e.preventDefault();
     var name=$('a-name').value.trim();
     if(!name){$('a-err').textContent='Введите название.';$('a-name').focus();return;}
-    var imports=ex?readImports():{};
+    var imports={};Object.keys(draft.imports).forEach(function(k){if(draft.imports[k])imports[k]=draft.imports[k];});
     var bad=Object.keys(imports).filter(function(k){return !/^(https?|webcal):\/\//i.test(imports[k]);});
     if(bad.length){$('a-err').textContent='Ссылка для «'+bad[0]+'» должна начинаться с https://';return;}
-    var changed=ex&&JSON.stringify(imports)!==JSON.stringify(ex.icalImport||{});
-    var rec={id:ex?ex.id:uid(),name:name,address:$('a-addr').value.trim(),icalToken:ex?ex.icalToken:undefined,icalImport:ex?imports:{},created:ex&&ex.created?ex.created:Date.now()};
-    putApt(rec).then(function(){closeModal();if(changed&&Object.keys(imports).length)refreshFromPlatforms(false);},function(){$('a-err').textContent='Не удалось сохранить. Проверьте соединение и попробуйте ещё раз.';});
+    var changed=JSON.stringify(imports)!==JSON.stringify((ex&&ex.icalImport)||{});
+    var rec={id:ex?ex.id:uid(),name:name,address:$('a-addr').value.trim(),icalToken:ex?ex.icalToken:undefined,icalImport:imports,listings:Object.assign({},draft.listings),created:ex&&ex.created?ex.created:Date.now()};
+    putApt(rec).then(function(){closeModal();if(changed&&Object.keys(imports).length)refreshFromPlatforms(false);
+      if(!ex&&state.mode==='cloud'&&Object.keys(rec.listings).length){pull().then(function(){if(aptById(rec.id))openApt(rec.id);});}},function(){$('a-err').textContent='Не удалось сохранить. Проверьте соединение и попробуйте ещё раз.';});
   });
   setTimeout(function(){$('a-name').focus();},0);
 }
