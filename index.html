@@ -549,7 +549,6 @@ function authHtml(){
     +'<label for="l-pass">Пароль'+(reg?' (не меньше 6 знаков)':'')+'</label><input id="l-pass" type="password" autocomplete="'+(reg?'new-password':'current-password')+'">'
     +'<p class="err" id="l-err" role="alert"></p>'
     +'<div class="actions"><button type="submit" class="btn primary" id="l-go">'+(reg?'Создать и войти':'Войти')+'</button></div>'
-    +'<p class="note"><button type="button" class="link" data-act="authSwitch">'+(reg?'У меня уже есть вход':'Первый раз? Создать вход')+'</button></p>'
     +'<p class="note"><button type="button" class="link" data-act="localOnly">Пока без входа, только на этом устройстве</button></p>'
     +'</form>';
 }
